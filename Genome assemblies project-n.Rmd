@@ -1,0 +1,316 @@
+---
+title: "Genome assemblies project"
+output:
+  html_notebook:
+    toc: yes
+    toc_depth: 3
+    # toc_float:
+    #   collapsed: false
+    #   smooth_scroll: false
+---
+
+
+## Setup
+```{r}
+library(dplyr)
+```
+
+Downloaded multiple text files containing the genome sizes of multiple organisms.  The goal is to extract just the organism names, total genome length, and maybe mitochondrial genome length just for fun!
+
+List of all the txt files:
+```{r}
+assemblies_list<-list.files("~/ncbi-genomes-2019-05-19")
+```
+
+This is what they look like: 
+[Assembly Statistics Report - Erpetoichthys calabaricus (reedfish)](./GCF_900747795.1.txt)
+
+The organism name and genome length data (we want the "Primary Assembly, total-length and ungapped-length lines) are in seperate parts of the file.  We'll need to extract and then combine them to be able to compare between organisms.
+
+
+The first thing I tried was to get a table with the genome size with just one of the txt files.
+```{r}
+assembliesR<-read.delim("~/ncbi-genomes-2019-05-19/GCF_900747795.1_fErpCal1.1_assembly_stats.txt",sep="",header=F,fill=TRUE,comment.char="#")
+print(assembliesR[1:15,]) 
+```
+
+Ok, we have 6 columns containing the data we need, but the organism name isn't listed because it's # commented in the txt file.
+
+After some testing, I decided to extract the genome size data and the organism name from the text files with two separate scripts...
+
+Section 1 will cover extracting the organism names.
+
+Section 2 will cover extracting all of the genome data.
+
+## Section 1: Organism Names
+
+First, the names:
+```{r}
+fdir<-list.files("~/ncbi-genomes-2019-05-19", 
+                 pattern=".txt",full.names=T)
+#450 files total
+fdir<-(c(fdir[1:448])) #remove 449 and 450, empty files
+```
+
+Now I have a list of all the text files.
+
+```{r}
+#Read the txt files, including # header containing names
+assem.n<-lapply(fdir, function(i) {
+  read.delim(i,
+      sep=" ",
+      header=F,
+      fill=T,
+      comment.char="")})
+```
+
+For each file, the organism name is always at the top.  Cutting down the size of the table will make it easier to deal with:
+```{r}
+top_only<- function(x) '[' (x[1:20,])
+assem.n<-lapply(assem.n,top_only)
+cut_columns<- function(x) x[,2:7]
+assem.n<-lapply(assem.n,cut_columns)
+
+```
+
+Getting the names based on row locations:
+```{r}
+#Get name based on row locations.... !doesn't work for all files
+get_name<- function(x){
+  x[3,4:6]
+}
+#apply function to all files
+N<- lapply(assem.n, get_name)
+print(N[4:12])
+```
+This extracts the names for some of the files, but not all...
+Need to find a way to extract based on the string preceding the organism name...
+
+
+This works a lot better!
+```{r}
+get_name<- function (x) '[' (x[which(x[,]=="Organism"),])
+nn<-lapply(assem.n,get_name)
+```
+
+
+Now nn can be converted to a data frame of organism names:
+```{r}
+
+paste_species<- function(name_) {
+  paste(name_$V5, name_$V6, sep=" ")
+}
+lnames<- lapply(nn,paste_species)
+dfnames <- data.frame(matrix(unlist(lnames), nrow=length(lnames),
+            byrow=T),stringsAsFactors=FALSE)
+colnames(dfnames)<-"Organism"
+head(dfnames)
+```
+
+It would be better to assign an ID to each organism name, so it can be linked to the data later...
+```{r}
+lnames<- lapply(nn,paste_species)
+
+lna<-rbind.data.frame((cbind(lnames)), make.row.names = F)
+print(head(lna))
+colnames(lna)<-"Organism"
+lna2<-cbind("ID"=rownames(lna), lna)
+#print(head(lna2))
+#printing in the chunk doesn't seem to work here... this code works in console
+```
+
+Check if ID column value matches the organism's original position in the list of assemblies files:
+```{r}
+print(lna[448,])
+print(nn[[448]])
+print(assem.n[[448]])
+
+```
+
+Looks good!  Next, the genome info.
+
+## Section 2: Genome data
+
+This is a bit easier, since I can use the same function but exclude all of the commented text at the top of each .txt file, leaving just the data table at the bottom.
+
+Reading the data into R the same way as the names script, this time using comment character '#' and assigning column names.
+```{r}
+colnames<-c("unit_name","mol_name","mol_type","seq_type","stat","value")
+
+assem.data<-lapply(fdir, function(i){
+    read.delim(i,
+      sep="\t",
+      header=F,
+      fill=T,
+      comment.char="#",
+      col.names=colnames)})
+
+print(assem.data[[3]][1:10,])
+```
+
+
+Extract data based on column names:
+```{r}
+get_total_length_allcols<- function (x) '[' (x[x$unit_name %in% "Primary Assembly"
+                                       &x$mol_name %in% "all"
+                                       &x$mol_type %in% "all"
+                                       &x$seq_type %in% "all"
+                                       &x$stat %in% "total-length" ,] )
+get_ungapped_length_allcols<- function (x) '[' (x[x$unit_name %in% "Primary Assembly"
+                                          &x$mol_name %in% "all"
+                                          &x$mol_type %in% "all"
+                                          &x$seq_type %in% "all"
+                                          &x$stat %in% "ungapped-length" ,] )
+
+get_mito_allcols<- function (x) '[' (x[x$unit_name %in% "non-nuclear"
+                               &x$mol_name %in% "MT"
+                               &x$mol_type %in% "Mitochondrion"
+                               &x$seq_type %in% "all"
+                               &x$stat %in% "total-length" ,] )
+
+total_all<-lapply(assem.data,get_total_length_allcols)
+ungapped_all<-lapply(assem.data,get_ungapped_length_allcols)
+mito_all<-lapply(assem.data,get_mito_allcols)
+```
+
+Change all of the above functions to get only the "value" column (keep the functions in the previous chunk for testing):
+```{r}
+get_total_length_val<- function (x) '[' (x[x$unit_name %in% "Primary Assembly"
+                          &x$mol_name %in% "all"
+                          &x$mol_type %in% "all"
+                          &x$seq_type %in% "all"
+                          &x$stat %in% "total-length" ,"value"] )
+
+get_ungapped_length_val<- function (x) '[' (x[x$unit_name %in% "Primary Assembly"
+                                   &x$mol_name %in% "all"
+                                   &x$mol_type %in% "all"
+                                   &x$seq_type %in% "all"
+                                   &x$stat %in% "ungapped-length" ,"value"] )
+
+get_mito_val<- function (x) '[' (x[x$unit_name %in% "non-nuclear"
+                                      &x$mol_name %in% "MT"
+                                      &x$mol_type %in% "Mitochondrion"
+                                      &x$seq_type %in% "all"
+                                      &x$stat %in% "total-length" ,"value"] )
+
+total<-lapply(assem.data,get_total_length_val)
+ungapped<-lapply(assem.data,get_ungapped_length_val)
+mito<-lapply(assem.data,get_mito_val)
+
+```
+
+Bind total, ungapped and mito into lists
+```{r}
+head(cbind(total))
+```
+
+Bind each new list again:
+```{r}
+head(cbind(cbind(total),cbind(ungapped),cbind(mito)))
+```
+
+Can do this all in one step:
+```{r}
+assem.data_vals<- rbind.data.frame(cbind(cbind(total),cbind(ungapped),cbind(mito)))
+colnames(assem.data_vals)<-c("total","ungapped","mito")
+head(assem.data_vals)
+#printing chunk doesn't work, code works in console
+```
+> head(df)
+       total   ungapped  mito
+1  143706478  142553500 19524
+2                       16299
+3 2870167880 2729969191 16313
+4 3196721236 3118525743 16866
+5 1373454788 1368765506 16596
+6  927296314  737783370 14117
+
+Row 2 is missing values?
+Row 2 organism is Mus musculus.
+
+In the raw data for Mus musculus, "Primary Assembly" is written as "Primary Assembly (C57BL/6J)".  This isn't found as a match by %in% in the functions above:
+
+get_total_length_val<- function (x) '[' (x[x$unit_name %in% "Primary Assembly".
+
+
+Try writing a new operator for partial matches?
+```{r}
+#examples
+#"%in%" <- function(x, table) match(x, table, nomatch = 0) > 0
+#example `%allin%` <- function(x,table) {all(match(x,table,nomatch = 0L) > 0L)}
+#str(startsWith) is function (x,prefix) 
+```
+```{r}
+`%starts%` <- function(x, string) {startsWith(as.character(x), string)}
+```
+
+Replace this operator into the functions for getting total-length, etc.
+```{r}
+get_total_length_val<- function (x) '[' (x[x$unit_name %starts% "Primary Assembly"
+                          &x$mol_name %in% "all"
+                          &x$mol_type %in% "all"
+                          &x$seq_type %in% "all"
+                          &x$stat %in% "total-length" ,"value"] )
+
+get_ungapped_length_val<- function (x) '[' (x[x$unit_name %starts% "Primary Assembly"
+                                   &x$mol_name %in% "all"
+                                   &x$mol_type %in% "all"
+                                   &x$seq_type %in% "all"
+                                   &x$stat %in% "ungapped-length" ,"value"] )
+get_mito_val<- function (x) '[' (x[x$unit_name %in% "non-nuclear"
+                                      &x$mol_name %in% "MT"
+                                      &x$mol_type %in% "Mitochondrion"
+                                      &x$seq_type %in% "all"
+                                      &x$stat %in% "total-length" ,"value"] )
+
+total<-lapply(assem.data,get_total_length_val)
+ungapped<-lapply(assem.data,get_ungapped_length_val)
+mito<-lapply(assem.data,get_mito_val)
+
+assem.data_vals<- rbind.data.frame(cbind(cbind(total),cbind(ungapped),cbind(mito)))
+colnames(assem.data_vals)<-c("total","ungapped","mito")
+```
+
+It works!!
+
+> head(df)
+       total   ungapped  mito
+1  143706478  142553500 19524
+2 2730855475 2652767259 16299
+3 2870167880 2729969191 16313
+4 3196721236 3118525743 16866
+5 1373454788 1368765506 16596
+6  927296314  737783370 14117
+
+
+Now cbind an ID value for each row:
+```{r}
+assem.data_vals<-cbind("ID"=rownames(assem.data_vals), assem.data_vals)
+```
+
+All ready to be combined with the organism names.
+
+## Section 3: Combine names and data
+Finally, combining organism names with their respective data:
+
+```{r}
+assemblies<-cbind(lna,assem.data_vals)
+```
+
+
+## Export data frame to csv
+Write the Organism column to csv so we can use it to 
+query in python:
+Extract just the Organism column into a new data frame:
+```{r}
+assemblies.orgs<-data.frame("Organism"=cbind(assemblies[,"Organism"]))
+```
+
+Write that column to csv:
+```{r}
+assemblies.orgs<-apply(assemblies.orgs,2,as.character)
+write.csv(assemblies.orgs, "assembliesorgs.csv")
+```
+
+
+[Assembly Statistics Report - Erpetoichthys calabaricus (reedfish)](./GCF_900747795.1.txt)

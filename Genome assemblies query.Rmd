@@ -1,0 +1,105 @@
+---
+title: "Genome assemblies query"
+output:
+  html_notebook:
+    toc: yes
+    toc_depth: 3
+    # toc_float:
+    #   collapsed: false
+    #   smooth_scroll: false
+---
+
+## Setup
+```{r}
+library(RSQLite)
+library(dbplyr)
+library(dplyr)
+library(DBI)
+```
+
+```{r}
+con <- DBI::dbConnect(RSQLite::SQLite(), dbname = "C:\\Users\\Kelly\\Documents\\Python\\Organisms\\Organismdb.db")
+
+```
+
+Check if connection worked
+```{r}
+attributes(con)
+dbListTables(con)
+dbExistsTable(con,"Organisms")
+
+dbListFields(con,"Organisms")
+```
+
+View table!
+```{r}
+tbl(con,"Organisms")
+```
+
+Get row count:
+```{r}
+tally(tbl(con,"Organisms"))
+
+#Show this query as SQL request:
+show_query(tally(tbl(con,"Organisms")))
+```
+
+
+Function to query assemblies
+```{r}
+query<- function(nx) {
+x<-dbSendQuery(con, 
+               'SELECT * 
+             FROM Organisms WHERE ScientificName == ?')
+dbBind(x,list(nx))
+z<-(dbFetch(x,n=1)) #n=1 specifies results to return, doesn't work as well if multiple results are fetched
+dbClearResult(x) #VERY important! VERY!
+return(z)
+dbClearResult(x) #VERY important! VERY!
+}
+```
+
+Query assemblies and append new columns from SQLite database
+```{r}
+db_results<-data.frame()  #make a new data.frame
+
+for (i in assemblies[,"Organism"]) {
+  x<-query(i)
+  if (nrow(x)==0) {
+    x[nrow(x)+1,]<- c(rep("NULL",11))}
+  db_results<-rbind(db_results,x)}
+
+#Bind new columns to assemblies dataframe
+assemblies_complete<-cbind(assemblies,db_results)
+```
+
+If there are any entries missing in db_results, db_results won't cbind to assemblies(differing numbers of rows)
+```{r}
+which(assemblies[,"Organism"] %starts% "Drosophila melanogaster")
+```
+
+
+Check which rows are missing:
+```{r}
+'%!in%' <- function(x,y)!('%in%'(x,y))
+which(assemblies[,"Organism"] %!in% db_results[,"ScientificName"])
+
+which(db_results[,"ScientificName"] %!in% assemblies[,"Organism"])
+```
+
+Verify that Organism matches Scientific Name in all rows
+```{r}
+which(assemblies_complete[,"Organism"] != assemblies_complete[,"ScientificName"])
+```
+
+Rows 100,200 and 400 weren't in the database!
+Print out the missing rows so I can go back to the Python script and add the missing data to the db.
+```{r}
+assemblies_complete[c(100,200,400),]
+```
+
+All done!
+
+
+
+
